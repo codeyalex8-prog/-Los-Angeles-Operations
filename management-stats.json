@@ -1,0 +1,44 @@
+{
+    "commands": {
+        "management": 1
+    },
+    "totalCommands": 1,
+    "recentCommands": [
+        {
+            "command": "management",
+            "userId": "1444276604938489886",
+            "username": "frosty_ex3e",
+            "timestamp": 1790983807456
+        }
+    ],
+    "recentActivity": [
+        {
+            "text": "🟢 Management panel created by @frosty_ex3e",
+            "timestamp": 1790983808343
+        },
+        {
+            "text": "/management used by @frosty_ex3e",
+            "timestamp": 1790983807456
+        }
+    ],
+    "tickets": {
+        "total": 0,
+        "opened": 0,
+        "claimed": 0,
+        "closed": 0
+    },
+    "applications": {
+        "submitted": 0,
+        "approved": 0,
+        "denied": 0
+    },
+    "feedback": {
+        "total": 0,
+        "today": 0,
+        "ratings": []
+    },
+    "errors": 0,
+    "failedCommands": 0,
+    "failedInteractions": 0,
+    "lastRestart": 1790983791540
+}
