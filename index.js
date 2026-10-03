@@ -4089,6 +4089,47 @@ setInterval(
 );
 
 // ======================================================
+// MEMBER JOIN WELCOME
+// ======================================================
+
+client.on(
+    "guildMemberAdd",
+    async member => {
+        try {
+            const channel =
+                await member.guild.channels.fetch(
+                    "1555276207774236702"
+                );
+
+            if (
+                !channel ||
+                !channel.isTextBased()
+            ) {
+                console.error(
+                    "[WELCOME] Welcome channel not found."
+                );
+                return;
+            }
+
+            await channel.send({
+                content:
+                    `Hey <@${member.id}>, welcome to the **Golden Cross City of Los Angeles**! We hope you enjoy your stay here. 🌴`
+            });
+
+            console.log(
+                `[WELCOME] Welcomed ${member.user.tag}`
+            );
+
+        } catch (error) {
+            console.error(
+                "[WELCOME ERROR]",
+                error
+            );
+        }
+    }
+);
+
+// ======================================================
 // LOGIN
 // ======================================================
 
