@@ -15,7 +15,7 @@ const {
     Routes,
     SlashCommandBuilder
 } = require("discord.js");
-
+const { handleERLCMessage } = require("./commands/erlc");
 const discordTranscripts = require("discord-html-transcripts");
 const fs = require("fs");
 const path = require("path");
@@ -3953,7 +3953,7 @@ client.on(
     async message => {
         if (message.author.bot)
             return;
-
+await handleERLCMessage(message);
         const application =
             applications.get(
                 message.channel.id

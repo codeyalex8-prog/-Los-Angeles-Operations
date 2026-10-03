@@ -1,30 +1,109 @@
 {
     "commands": {
-        "management": 1
+        "management": 1,
+        "sessionboost": 6,
+        "sessionstart": 1,
+        "sessioninfopanel": 11,
+        "staffinfomationpannel": 3,
+        "sessionvote": 2
     },
-    "totalCommands": 1,
+    "totalCommands": 24,
     "recentCommands": [
         {
-            "command": "management",
+            "command": "sessionvote",
             "userId": "1444276604938489886",
             "username": "frosty_ex3e",
-            "timestamp": 1790983807456
+            "timestamp": 1791064578009
+        },
+        {
+            "command": "sessionvote",
+            "userId": "1444276604938489886",
+            "username": "frosty_ex3e",
+            "timestamp": 1791064448363
+        },
+        {
+            "command": "sessioninfopanel",
+            "userId": "1444276604938489886",
+            "username": "frosty_ex3e",
+            "timestamp": 1791064080760
+        },
+        {
+            "command": "staffinfomationpannel",
+            "userId": "1444276604938489886",
+            "username": "frosty_ex3e",
+            "timestamp": 1791063988855
+        },
+        {
+            "command": "staffinfomationpannel",
+            "userId": "1444276604938489886",
+            "username": "frosty_ex3e",
+            "timestamp": 1791063896663
+        },
+        {
+            "command": "staffinfomationpannel",
+            "userId": "1444276604938489886",
+            "username": "frosty_ex3e",
+            "timestamp": 1791063710860
+        },
+        {
+            "command": "sessioninfopanel",
+            "userId": "1444276604938489886",
+            "username": "frosty_ex3e",
+            "timestamp": 1791061854692
+        },
+        {
+            "command": "sessioninfopanel",
+            "userId": "1444276604938489886",
+            "username": "frosty_ex3e",
+            "timestamp": 1791061766344
         }
     ],
     "recentActivity": [
         {
-            "text": "🟢 Management panel created by @frosty_ex3e",
-            "timestamp": 1790983808343
+            "text": "/sessionvote used by @frosty_ex3e",
+            "timestamp": 1791064578009
         },
         {
-            "text": "/management used by @frosty_ex3e",
-            "timestamp": 1790983807456
+            "text": "/sessionvote used by @frosty_ex3e",
+            "timestamp": 1791064448363
+        },
+        {
+            "text": "/sessioninfopanel used by @frosty_ex3e",
+            "timestamp": 1791064080760
+        },
+        {
+            "text": "/staffinfomationpannel used by @frosty_ex3e",
+            "timestamp": 1791063988855
+        },
+        {
+            "text": "/staffinfomationpannel used by @frosty_ex3e",
+            "timestamp": 1791063896663
+        },
+        {
+            "text": "/staffinfomationpannel used by @frosty_ex3e",
+            "timestamp": 1791063710860
+        },
+        {
+            "text": "/sessioninfopanel used by @frosty_ex3e",
+            "timestamp": 1791061854692
+        },
+        {
+            "text": "/sessioninfopanel used by @frosty_ex3e",
+            "timestamp": 1791061766344
+        },
+        {
+            "text": "/sessioninfopanel used by @frosty_ex3e",
+            "timestamp": 1791061708424
+        },
+        {
+            "text": "/sessioninfopanel used by @frosty_ex3e",
+            "timestamp": 1791061622771
         }
     ],
     "tickets": {
         "total": 0,
         "opened": 0,
-        "claimed": 0,
+        "claimed": 1,
         "closed": 0
     },
     "applications": {
@@ -37,8 +116,8 @@
         "today": 0,
         "ratings": []
     },
-    "errors": 0,
-    "failedCommands": 0,
-    "failedInteractions": 0,
-    "lastRestart": 1790983791540
+    "errors": 12,
+    "failedCommands": 6,
+    "failedInteractions": 5,
+    "lastRestart": 1791064571527
 }

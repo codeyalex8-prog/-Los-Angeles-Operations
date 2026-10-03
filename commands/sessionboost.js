@@ -10,13 +10,10 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(interaction) {
-
         const components = [
             {
                 type: 17,
                 components: [
-
-                    // TOP IMAGE
                     {
                         type: 12,
                         items: [
@@ -28,14 +25,12 @@ module.exports = {
                         ]
                     },
 
-                    // DIVIDER
                     {
                         type: 14,
                         spacing: 2,
                         divider: true
                     },
 
-                    // SESSION BOOST
                     {
                         type: 10,
                         content:
@@ -51,14 +46,12 @@ module.exports = {
 > Every player helps keep the session active, so come join us and get involved!`
                     },
 
-                    // DIVIDER
                     {
                         type: 14,
                         spacing: 1,
                         divider: true
                     },
 
-                    // BOTTOM IMAGE
                     {
                         type: 12,
                         items: [
@@ -69,36 +62,33 @@ module.exports = {
                             }
                         ]
                     }
-
                 ]
             }
         ];
 
         try {
-
             await interaction.channel.send({
                 flags: 32768,
-                components
+                components: components
             });
 
-            await interaction.reply({
-                content: "Session Boost panel posted.",
-                flags: 64
-            });
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({
+                    content: "Session Boost panel posted.",
+                    flags: 64
+                });
+            }
 
         } catch (error) {
-
-            console.error("");
             console.error("========== SESSION BOOST ERROR ==========");
             console.error(error);
             console.error("=========================================");
-            console.error("");
 
             if (!interaction.replied && !interaction.deferred) {
                 await interaction.reply({
                     content: "I couldn't post the Session Boost panel. Check the terminal.",
                     flags: 64
-                });
+                }).catch(() => {});
             }
         }
     }
