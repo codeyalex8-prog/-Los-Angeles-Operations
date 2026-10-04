@@ -17,6 +17,11 @@ const {
     SlashCommandBuilder
 } = require("discord.js");
 const { handleERLCMessage } = require("./commands/erlc");
+
+const {
+    setupTicketAI,
+    sendOpeningMessage
+} = require("./commands/ticketAI");
 const discordTranscripts = require("discord-html-transcripts");
 const fs = require("fs");
 const path = require("path");
@@ -3505,7 +3510,7 @@ We encourage you to continue being active in our community and to apply again in
 // ======================================================
 // READY
 // ======================================================
-
+setupTicketAI(client);
 client.once(
     "clientReady",
     async () => {
@@ -4298,7 +4303,11 @@ Please make sure you are familiar with the current Discord rules before using ou
                             }
                         ]
                     });
-
+await sendOpeningMessage(
+    ticketChannel,
+    interaction.user.username,
+    reason
+);
                     await interaction.editReply({
                         content:
                             `Your **${ticketType.label}** ticket has been created: ${ticketChannel}`
