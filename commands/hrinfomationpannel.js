@@ -9,7 +9,6 @@ module.exports = {
         .setDescription("Post the HR Information panel"),
 
     async execute(interaction) {
-
         await interaction.reply({
             content: "HR Information panel posted.",
             flags: MessageFlags.Ephemeral
@@ -43,9 +42,9 @@ module.exports = {
                         {
                             type: 10,
                             content:
-`**:998896gavel: HR INFORMATION**
+`**HR INFORMATION**
 
-> **:401776book: High Rank Responsibilities**
+> **High Rank Responsibilities**
 > • Lead and support staff
 > • Handle staff situations professionally
 > • Help manage server operations
@@ -53,7 +52,16 @@ module.exports = {
 > • Follow the chain of command
 > • Keep staff matters professional and confidential
 
-**:570616gearicon: HR EXPECTATIONS**
+**HR DUTIES**
+
+> • Assist staff members when needed
+> • Review staff-related situations
+> • Handle reports and concerns appropriately
+> • Help maintain staff standards
+> • Work alongside other HR members
+> • Escalate serious issues when necessary
+
+**HR EXPECTATIONS**
 
 > • Use your permissions responsibly
 > • Do not abuse your rank
@@ -62,15 +70,19 @@ module.exports = {
 > • Follow all server rules and procedures
 > • Work together with other HR members
 
-**:685951info: IMPORTANT**
+**IMPORTANT**
 
-> Your HR position is a position of responsibility. Having a high rank does not mean you are above the rules. Any abuse of permissions or authority may result in disciplinary action.
+> Your HR position is a position of responsibility. Having a high rank does not place you above the rules. Abuse of permissions or authority may result in disciplinary action.
 
-**:944992bell: STAFF ISSUES**
+**STAFF ISSUES**
 
-> If you have an issue with a staff member or are unsure how to handle a situation, contact a higher-ranking member of staff before taking action.
+> If you have an issue with a staff member or are unsure how to handle a situation, contact a higher-ranking member of HR before taking action.
 
-**:1882megaphone: REMEMBER**
+**HR ACTIONS**
+
+> Make sure all staff actions are fair, reasonable and supported by appropriate evidence. When unsure, contact a higher-ranking member of HR.
+
+**REMEMBER**
 
 > Represent **Los Angeles State RolePlay** properly and help maintain a professional, welcoming and organised community.
 

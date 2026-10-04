@@ -9,7 +9,6 @@ module.exports = {
         .setDescription("Post the Staff Information panel"),
 
     async execute(interaction) {
-
         await interaction.reply({
             content: "Staff Information panel posted.",
             flags: MessageFlags.Ephemeral
@@ -88,14 +87,14 @@ module.exports = {
                                     type: 2,
                                     style: 5,
                                     label: "Staff Guide",
-                                    url: "https://docs.google.com/document/d/1NZyN6W4lVVxoL1W6h31aLBMml2b04vjBslBHpGywg-Y/edit"
+                                    url: "https://docs.google.com/document/d/1NZyN6W4lVVxoL1W6h31aLBMml2b04vjBslBHpGywg-Y/edit?usp=sharing"
                                 },
 
                                 {
                                     type: 2,
                                     style: 5,
                                     label: "Support Team Guide",
-                                    url: "https://docs.google.com/document/d/1Hkim7pyEzV4M6m3eV82THi6HQWPJCLC402gw2L5DZdc/edit"
+                                    url: "https://docs.google.com/document/d/1Hkim7pyEzV4M6m3eV82THi6HQWPJCLC402gw2L5DZdc/edit?usp=sharing"
                                 }
                             ]
                         },

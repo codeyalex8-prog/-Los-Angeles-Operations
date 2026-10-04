@@ -3,121 +3,128 @@
         "management": 1,
         "sessionboost": 6,
         "sessionstart": 1,
-        "sessioninfopanel": 11,
-        "staffinfomationpannel": 3,
-        "sessionvote": 2
+        "sessioninfopanel": 12,
+        "staffinfomationpannel": 10,
+        "sessionvote": 2,
+        "hrinfomationpannel": 10,
+        "staffapplicationsetup": 1,
+        "promote": 1,
+        "assistance": 1,
+        "guidelines": 1,
+        "dashboardsetup": 1,
+        "marketplacesetup": 1
     },
-    "totalCommands": 24,
+    "totalCommands": 48,
     "recentCommands": [
         {
-            "command": "sessionvote",
-            "userId": "1444276604938489886",
-            "username": "frosty_ex3e",
-            "timestamp": 1791064578009
-        },
-        {
-            "command": "sessionvote",
-            "userId": "1444276604938489886",
-            "username": "frosty_ex3e",
-            "timestamp": 1791064448363
-        },
-        {
             "command": "sessioninfopanel",
             "userId": "1444276604938489886",
             "username": "frosty_ex3e",
-            "timestamp": 1791064080760
+            "timestamp": 1791106392919
         },
         {
-            "command": "staffinfomationpannel",
+            "command": "marketplacesetup",
             "userId": "1444276604938489886",
             "username": "frosty_ex3e",
-            "timestamp": 1791063988855
+            "timestamp": 1791106352095
         },
         {
-            "command": "staffinfomationpannel",
+            "command": "dashboardsetup",
             "userId": "1444276604938489886",
             "username": "frosty_ex3e",
-            "timestamp": 1791063896663
+            "timestamp": 1791106337179
         },
         {
-            "command": "staffinfomationpannel",
+            "command": "guidelines",
             "userId": "1444276604938489886",
             "username": "frosty_ex3e",
-            "timestamp": 1791063710860
+            "timestamp": 1791106325559
         },
         {
-            "command": "sessioninfopanel",
+            "command": "assistance",
             "userId": "1444276604938489886",
             "username": "frosty_ex3e",
-            "timestamp": 1791061854692
+            "timestamp": 1791106319061
         },
         {
-            "command": "sessioninfopanel",
+            "command": "promote",
             "userId": "1444276604938489886",
             "username": "frosty_ex3e",
-            "timestamp": 1791061766344
+            "timestamp": 1791106149875
+        },
+        {
+            "command": "staffapplicationsetup",
+            "userId": "1444276604938489886",
+            "username": "frosty_ex3e",
+            "timestamp": 1791106002297
+        },
+        {
+            "command": "hrinfomationpannel",
+            "userId": "1444276604938489886",
+            "username": "frosty_ex3e",
+            "timestamp": 1791105886420
         }
     ],
     "recentActivity": [
         {
-            "text": "/sessionvote used by @frosty_ex3e",
-            "timestamp": 1791064578009
+            "text": "📋 Application denied by @frosty_ex3e",
+            "timestamp": 1791106892953
         },
         {
-            "text": "/sessionvote used by @frosty_ex3e",
-            "timestamp": 1791064448363
+            "text": "📋 Application submitted by @frosty_ex3e",
+            "timestamp": 1791106872251
         },
         {
-            "text": "/sessioninfopanel used by @frosty_ex3e",
-            "timestamp": 1791064080760
+            "text": "🎫 Ticket #4 closed by @frosty_ex3e",
+            "timestamp": 1791106593646
         },
         {
-            "text": "/staffinfomationpannel used by @frosty_ex3e",
-            "timestamp": 1791063988855
+            "text": "⚠️ unhandled rejection error detected",
+            "timestamp": 1791106553280
         },
         {
-            "text": "/staffinfomationpannel used by @frosty_ex3e",
-            "timestamp": 1791063896663
+            "text": "📋 Application submitted by @frosty_ex3e",
+            "timestamp": 1791106519140
         },
         {
-            "text": "/staffinfomationpannel used by @frosty_ex3e",
-            "timestamp": 1791063710860
+            "text": "📋 Application denied by @frosty_ex3e",
+            "timestamp": 1791106441898
         },
         {
-            "text": "/sessioninfopanel used by @frosty_ex3e",
-            "timestamp": 1791061854692
-        },
-        {
-            "text": "/sessioninfopanel used by @frosty_ex3e",
-            "timestamp": 1791061766344
+            "text": "📋 Application submitted by @frosty_ex3e",
+            "timestamp": 1791106405780
         },
         {
             "text": "/sessioninfopanel used by @frosty_ex3e",
-            "timestamp": 1791061708424
+            "timestamp": 1791106392919
         },
         {
-            "text": "/sessioninfopanel used by @frosty_ex3e",
-            "timestamp": 1791061622771
+            "text": "/marketplacesetup used by @frosty_ex3e",
+            "timestamp": 1791106352095
+        },
+        {
+            "text": "/dashboardsetup used by @frosty_ex3e",
+            "timestamp": 1791106337179
         }
     ],
     "tickets": {
         "total": 0,
         "opened": 0,
         "claimed": 1,
-        "closed": 0
+        "closed": 1
     },
     "applications": {
-        "submitted": 0,
-        "approved": 0,
-        "denied": 0
+        "submitted": 3,
+        "approved": 1,
+        "denied": 2
     },
     "feedback": {
         "total": 0,
         "today": 0,
         "ratings": []
     },
-    "errors": 12,
-    "failedCommands": 6,
-    "failedInteractions": 5,
-    "lastRestart": 1791064571527
+    "errors": 27,
+    "failedCommands": 19,
+    "failedInteractions": 6,
+    "lastRestart": 1791107281980
 }

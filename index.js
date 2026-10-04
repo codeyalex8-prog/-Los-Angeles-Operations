@@ -11,6 +11,7 @@ const {
     TextInputBuilder,
     TextInputStyle,
     ActionRowBuilder,
+    AttachmentBuilder,
     REST,
     Routes,
     SlashCommandBuilder
@@ -19,6 +20,87 @@ const { handleERLCMessage } = require("./commands/erlc");
 const discordTranscripts = require("discord-html-transcripts");
 const fs = require("fs");
 const path = require("path");
+
+// ======================================================
+// SINGLE INSTANCE LOCK
+// ======================================================
+//
+// Stops a second copy of the bot from starting on the same
+// machine. Two copies running at once is what causes double
+// DMs and double result messages.
+//
+// If the bot says another instance is running but you are
+// sure it isn't, delete "bot-instance.lock" and start again.
+//
+// ======================================================
+
+const LOCK_FILE =
+    path.join(__dirname, "bot-instance.lock");
+
+function isProcessRunning(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error) {
+        return error.code === "EPERM";
+    }
+}
+
+(function acquireInstanceLock() {
+    try {
+        if (fs.existsSync(LOCK_FILE)) {
+            const oldPid =
+                Number(
+                    fs.readFileSync(
+                        LOCK_FILE,
+                        "utf8"
+                    ).trim()
+                );
+
+            if (
+                oldPid &&
+                oldPid !== process.pid &&
+                isProcessRunning(oldPid)
+            ) {
+                console.error(
+                    `[LOCK] Another copy of this bot is already running (PID ${oldPid}). Stop it first, then start this one. Exiting.`
+                );
+
+                process.exit(1);
+            }
+        }
+
+        fs.writeFileSync(
+            LOCK_FILE,
+            String(process.pid)
+        );
+    } catch (error) {
+        console.error(
+            "[LOCK] Could not create lock file:",
+            error
+        );
+    }
+})();
+
+function releaseInstanceLock() {
+    try {
+        if (
+            fs.existsSync(LOCK_FILE) &&
+            fs.readFileSync(
+                LOCK_FILE,
+                "utf8"
+            ).trim() === String(process.pid)
+        ) {
+            fs.unlinkSync(LOCK_FILE);
+        }
+    } catch {}
+}
+
+process.on("exit", releaseInstanceLock);
+
+process.on("SIGINT", () => process.exit(0));
+
+process.on("SIGTERM", () => process.exit(0));
 
 // ======================================================
 // CLIENT
@@ -111,11 +193,318 @@ const DASHBOARD_UPDATE_INTERVAL = 10 * 1000;
 // IMAGES
 // ======================================================
 
+// NOTE: this TOP_IMAGE link is the "Guidelines" banner.
+// For the application panels, set APPLICATION_TOP_IMAGE in
+// your .env, or drop application-top.png into ./images/
 const TOP_IMAGE =
     "https://discord-webhook.com/uploads/62dfbd3e742460896e60890a80b79a6c.png";
 
 const BOTTOM_IMAGE =
     "https://discord-webhook.com/uploads/bb5f14a71e4668885d2c0f6da52caa20.png";
+
+const RESULTS_IMAGE =
+    "https://discord-webhook.com/uploads/921574de45f213177862c9fe089123f9.png";
+
+const RESULTS_IMAGE_PROXY =
+    "https://images-ext-1.discordapp.net/external/_dRP0YozvkfUwpCYLHJrZDaQBuT4-9sUsxGGPjw_y1w/https/discord-webhook.com/uploads/921574de45f213177862c9fe089123f9.png?format=webp&quality=lossless&width=2048&height=684";
+
+// ======================================================
+// APPLICATION IMAGE LOADER
+// ======================================================
+//
+// Instead of relying on Discord to hotlink the images from an
+// external host, the bot loads them itself and uploads them to
+// Discord as attachments (attachment://file.png).
+//
+// Load order for every image:
+//   1. Local file in ./images/ (application-top.png, etc.)
+//   2. Download from the URL (.env override or default)
+//   3. Download from the fallback URL (if one exists)
+//   4. If everything fails, the plain URL is used as a last resort
+//
+// Optional .env overrides:
+//   APPLICATION_TOP_IMAGE=https://...
+//   APPLICATION_BOTTOM_IMAGE=https://...
+//   APPLICATION_RESULTS_IMAGE=https://...
+//
+// ======================================================
+
+const IMAGE_DIR =
+    path.join(__dirname, "images");
+
+const IMAGE_SOURCES = {
+    top: {
+        base: "application-top",
+        url:
+            process.env.APPLICATION_TOP_IMAGE ||
+            TOP_IMAGE
+    },
+
+    bottom: {
+        base: "application-bottom",
+        url:
+            process.env.APPLICATION_BOTTOM_IMAGE ||
+            BOTTOM_IMAGE
+    },
+
+    results: {
+        base: "application-results",
+        url:
+            process.env.APPLICATION_RESULTS_IMAGE ||
+            RESULTS_IMAGE,
+
+        fallbackUrl:
+            process.env.APPLICATION_RESULTS_IMAGE
+                ? undefined
+                : RESULTS_IMAGE_PROXY
+    }
+};
+
+const imageCache = {};
+
+let lastImageLoadAttempt = 0;
+
+const IMAGE_RETRY_DELAY = 60 * 1000;
+
+function detectImageExtension(buffer) {
+    if (!buffer || buffer.length < 12) {
+        return null;
+    }
+
+    if (
+        buffer[0] === 0x89 &&
+        buffer[1] === 0x50 &&
+        buffer[2] === 0x4e &&
+        buffer[3] === 0x47
+    ) {
+        return "png";
+    }
+
+    if (
+        buffer[0] === 0xff &&
+        buffer[1] === 0xd8 &&
+        buffer[2] === 0xff
+    ) {
+        return "jpg";
+    }
+
+    if (buffer.toString("ascii", 0, 4) === "GIF8") {
+        return "gif";
+    }
+
+    if (
+        buffer.toString("ascii", 0, 4) === "RIFF" &&
+        buffer.toString("ascii", 8, 12) === "WEBP"
+    ) {
+        return "webp";
+    }
+
+    return null;
+}
+
+async function loadSingleImage(key) {
+    const source = IMAGE_SOURCES[key];
+
+    try {
+        // 1. Local file
+
+        for (const ext of ["png", "jpg", "jpeg", "webp", "gif"]) {
+            const filePath =
+                path.join(IMAGE_DIR, `${source.base}.${ext}`);
+
+            if (!fs.existsSync(filePath)) {
+                continue;
+            }
+
+            const buffer =
+                fs.readFileSync(filePath);
+
+            const detected =
+                detectImageExtension(buffer);
+
+            if (detected) {
+                imageCache[key] = {
+                    buffer,
+                    name: `${source.base}.${detected}`
+                };
+
+                console.log(
+                    `[IMAGES] Loaded "${key}" from local file ${source.base}.${ext}`
+                );
+
+                return true;
+            }
+        }
+
+        // 2. Download
+
+        const urls =
+            [source.url, source.fallbackUrl].filter(Boolean);
+
+        for (const url of urls) {
+            try {
+                const response =
+                    await fetch(url, {
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+
+                            "Accept":
+                                "image/*,*/*;q=0.8"
+                        },
+
+                        signal:
+                            AbortSignal.timeout(10000)
+                    });
+
+                if (!response.ok) {
+                    throw new Error(
+                        `HTTP ${response.status}`
+                    );
+                }
+
+                const buffer =
+                    Buffer.from(
+                        await response.arrayBuffer()
+                    );
+
+                const detected =
+                    detectImageExtension(buffer);
+
+                if (!detected) {
+                    throw new Error(
+                        "Response was not a valid image"
+                    );
+                }
+
+                imageCache[key] = {
+                    buffer,
+                    name: `${source.base}.${detected}`
+                };
+
+                console.log(
+                    `[IMAGES] Downloaded "${key}" from ${url}`
+                );
+
+                return true;
+            } catch (error) {
+                console.error(
+                    `[IMAGES] Could not load "${key}" from ${url}:`,
+                    error.message
+                );
+            }
+        }
+    } catch (error) {
+        console.error(
+            `[IMAGES] Unexpected error loading "${key}":`,
+            error
+        );
+    }
+
+    return false;
+}
+
+async function loadApplicationImages(force = false) {
+    const missing =
+        Object.keys(IMAGE_SOURCES).filter(
+            key => !imageCache[key]
+        );
+
+    if (!missing.length) {
+        return;
+    }
+
+    if (
+        !force &&
+        Date.now() - lastImageLoadAttempt <
+            IMAGE_RETRY_DELAY
+    ) {
+        return;
+    }
+
+    lastImageLoadAttempt =
+        Date.now();
+
+    await Promise.all(
+        missing.map(loadSingleImage)
+    );
+}
+
+// useAttachments = true  -> attachment://file.png (uploaded by the bot)
+// useAttachments = false -> the plain image link
+function applicationImageUrl(key, useAttachments = true) {
+    const cached =
+        imageCache[key];
+
+    if (useAttachments && cached) {
+        return `attachment://${cached.name}`;
+    }
+
+    const source =
+        IMAGE_SOURCES[key];
+
+    return source.fallbackUrl || source.url;
+}
+
+function applicationImageFiles(...keys) {
+    return keys
+        .filter(key => imageCache[key])
+        .map(
+            key =>
+                new AttachmentBuilder(
+                    imageCache[key].buffer,
+                    {
+                        name: imageCache[key].name
+                    }
+                )
+        );
+}
+
+// Sends a Components V2 panel with the uploaded images.
+// If that fails (for example the bot is missing the
+// Attach Files permission), it retries using plain image links
+// so the panel still gets posted.
+async function sendApplicationPanel(
+    channel,
+    imageKeys,
+    buildComponents
+) {
+    const files =
+        applicationImageFiles(...imageKeys);
+
+    try {
+        return await channel.send({
+            flags:
+                MessageFlags.IsComponentsV2,
+
+            files,
+
+            components:
+                buildComponents(true)
+        });
+    } catch (error) {
+        console.error(
+            `[APPLICATION PANEL] Sending to channel ${channel.id} with uploaded images failed:`,
+            error.message
+        );
+
+        if (!files.length) {
+            throw error;
+        }
+
+        console.log(
+            `[APPLICATION PANEL] Retrying channel ${channel.id} with plain image links...`
+        );
+    }
+
+    return channel.send({
+        flags:
+            MessageFlags.IsComponentsV2,
+
+        components:
+            buildComponents(false)
+    });
+}
 
 // ======================================================
 // STORAGE
@@ -1913,6 +2302,9 @@ async function createStaffApplication(
             MessageFlags.Ephemeral
     });
 
+    // Make sure the application images are loaded
+    await loadApplicationImages();
+
     const username =
         cleanUsername(
             interaction.user.username
@@ -1965,6 +2357,7 @@ async function createStaffApplication(
                             PermissionFlagsBits.ViewChannel,
                             PermissionFlagsBits.SendMessages,
                             PermissionFlagsBits.ReadMessageHistory,
+                            PermissionFlagsBits.AttachFiles,
                             PermissionFlagsBits.ManageChannels,
                             PermissionFlagsBits.ManageMessages
                         ]
@@ -2008,11 +2401,10 @@ async function createStaffApplication(
         `📋 Application submitted by @${interaction.user.username}`
     );
 
-    await applicationChannel.send({
-        flags:
-            MessageFlags.IsComponentsV2,
-
-        components: [
+    await sendApplicationPanel(
+        applicationChannel,
+        ["top", "bottom"],
+        useAttachments => [
             {
                 type: 17,
 
@@ -2024,7 +2416,10 @@ async function createStaffApplication(
                             {
                                 media: {
                                     url:
-                                        TOP_IMAGE
+                                        applicationImageUrl(
+                                            "top",
+                                            useAttachments
+                                        )
                                 }
                             }
                         ]
@@ -2086,7 +2481,10 @@ Make sure to review your answers, use grammar at all times, and don't delete any
                             {
                                 media: {
                                     url:
-                                        BOTTOM_IMAGE
+                                        applicationImageUrl(
+                                            "bottom",
+                                            useAttachments
+                                        )
                                 }
                             }
                         ]
@@ -2094,6 +2492,11 @@ Make sure to review your answers, use grammar at all times, and don't delete any
                 ]
             }
         ]
+    ).catch(error => {
+        console.error(
+            "[APPLICATION PANEL] Could not send the application panel:",
+            error
+        );
     });
 
     await sendApplicationQuestion(
@@ -2165,6 +2568,9 @@ async function finishApplication(
         application
     );
 
+    // Make sure the application images are loaded
+    await loadApplicationImages();
+
     const user =
         await client.users.fetch(
             application.userId
@@ -2188,107 +2594,114 @@ async function finishApplication(
             )
             .join("\n\n");
 
-    const reviewPanel = [
-        {
-            type: 17,
+    const buildReviewPanel =
+        useAttachments => [
+            {
+                type: 17,
 
-            components: [
-                {
-                    type: 12,
+                components: [
+                    {
+                        type: 12,
 
-                    items: [
-                        {
-                            media: {
-                                url:
-                                    TOP_IMAGE
+                        items: [
+                            {
+                                media: {
+                                    url:
+                                        applicationImageUrl(
+                                            "top",
+                                            useAttachments
+                                        )
+                                }
                             }
-                        }
-                    ]
-                },
+                        ]
+                    },
 
-                {
-                    type: 14,
-                    spacing: 2,
-                    divider: true
-                },
+                    {
+                        type: 14,
+                        spacing: 2,
+                        divider: true
+                    },
 
-                {
-                    type: 10,
+                    {
+                        type: 10,
 
-                    content:
+                        content:
 `# Staff Application
 
 **Applicant:** <@${application.userId}>
 **Username:** \`${user?.username || "Unknown"}\`
 
 Please review the applicant's answers below.`
-                },
+                    },
 
-                {
-                    type: 14,
-                    spacing: 1,
-                    divider: true
-                },
+                    {
+                        type: 14,
+                        spacing: 1,
+                        divider: true
+                    },
 
-                {
-                    type: 10,
-                    content:
-                        answers
-                },
+                    {
+                        type: 10,
+                        content:
+                            answers
+                    },
 
-                {
-                    type: 14,
-                    spacing: 1,
-                    divider: true
-                },
+                    {
+                        type: 14,
+                        spacing: 1,
+                        divider: true
+                    },
 
-                {
-                    type: 1,
+                    {
+                        type: 1,
 
-                    components: [
-                        {
-                            type: 2,
-                            style: 3,
-                            label:
-                                "Approve",
+                        components: [
+                            {
+                                type: 2,
+                                style: 3,
+                                label:
+                                    "Approve",
 
-                            custom_id:
-                                `staff_application_approve:${application.userId}`
-                        },
+                                custom_id:
+                                    `staff_application_approve:${application.userId}`
+                            },
 
-                        {
-                            type: 2,
-                            style: 4,
-                            label:
-                                "Deny",
+                            {
+                                type: 2,
+                                style: 4,
+                                label:
+                                    "Deny",
 
-                            custom_id:
-                                `staff_application_deny:${application.userId}`
-                        }
-                    ]
-                },
-
-                {
-                    type: 14,
-                    spacing: 1,
-                    divider: true
-                },
-
-                {
-                    type: 12,
-
-                    items: [
-                        {
-                            media: {
-                                url:
-                                    BOTTOM_IMAGE
+                                custom_id:
+                                    `staff_application_deny:${application.userId}`
                             }
-                        }
-                    ]
-                }
-            ]
-        }
-    ];
+                        ]
+                    },
+
+                    {
+                        type: 14,
+                        spacing: 1,
+                        divider: true
+                    },
+
+                    {
+                        type: 12,
+
+                        items: [
+                            {
+                                media: {
+                                    url:
+                                        applicationImageUrl(
+                                            "bottom",
+                                            useAttachments
+                                        )
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        ];
 
     const reviewChannel =
         await client.channels.fetch(
@@ -2296,13 +2709,20 @@ Please review the applicant's answers below.`
         ).catch(() => null);
 
     if (reviewChannel) {
-        await reviewChannel.send({
-            flags:
-                MessageFlags.IsComponentsV2,
-
-            components:
-                reviewPanel
-        }).catch(console.error);
+        await sendApplicationPanel(
+            reviewChannel,
+            ["top", "bottom"],
+            buildReviewPanel
+        ).catch(error => {
+            console.error(
+                "[APPLICATION REVIEW] Could not post the review panel:",
+                error
+            );
+        });
+    } else {
+        console.error(
+            `[APPLICATION REVIEW] Review channel ${APPLICATION_REVIEW_CHANNEL_ID} was not found or the bot cannot see it.`
+        );
     }
 
     const completedChannel =
@@ -2315,13 +2735,24 @@ Please review the applicant's answers below.`
         COMPLETED_APPLICATION_CHANNEL_ID !==
             APPLICATION_REVIEW_CHANNEL_ID
     ) {
-        await completedChannel.send({
-            flags:
-                MessageFlags.IsComponentsV2,
-
-            components:
-                reviewPanel
-        }).catch(console.error);
+        await sendApplicationPanel(
+            completedChannel,
+            ["top", "bottom"],
+            buildReviewPanel
+        ).catch(error => {
+            console.error(
+                "[APPLICATION REVIEW] Could not post to the completed applications channel:",
+                error
+            );
+        });
+    } else if (
+        !completedChannel &&
+        COMPLETED_APPLICATION_CHANNEL_ID !==
+            APPLICATION_REVIEW_CHANNEL_ID
+    ) {
+        console.error(
+            `[APPLICATION REVIEW] Completed channel ${COMPLETED_APPLICATION_CHANNEL_ID} was not found or the bot cannot see it.`
+        );
     }
 
     setTimeout(
@@ -2341,6 +2772,79 @@ Please review the applicant's answers below.`
 // ======================================================
 // REVIEWED COMPONENTS
 // ======================================================
+//
+// discord.js gives us component CLASS INSTANCES on
+// interaction.message.components. Spreading those instances
+// loses fields like "type" and "custom_id", which made the
+// edit fail. Everything is converted to plain API objects
+// with .toJSON() first, then rebuilt.
+//
+// Images that were uploaded as attachments are re-pointed
+// to attachment://filename so they keep displaying.
+//
+// ======================================================
+
+function cleanRawComponent(component) {
+    const raw = { ...component };
+
+    // IDs are re-assigned by Discord automatically
+    delete raw.id;
+
+    if (Array.isArray(raw.components)) {
+        raw.components =
+            raw.components.map(cleanRawComponent);
+    }
+
+    // Media gallery: keep images displaying
+    if (
+        raw.type === 12 &&
+        Array.isArray(raw.items)
+    ) {
+        raw.items = raw.items.map(item => {
+            const originalUrl =
+                item.media?.url || "";
+
+            let finalUrl =
+                originalUrl;
+
+            if (
+                /discordapp\.(com|net)\/attachments\//i.test(
+                    originalUrl
+                )
+            ) {
+                try {
+                    const fileName =
+                        decodeURIComponent(
+                            new URL(originalUrl)
+                                .pathname
+                                .split("/")
+                                .pop()
+                        );
+
+                    finalUrl =
+                        `attachment://${fileName}`;
+                } catch {
+                    finalUrl =
+                        originalUrl;
+                }
+            }
+
+            return {
+                media: {
+                    url: finalUrl
+                },
+
+                description:
+                    item.description || undefined,
+
+                spoiler:
+                    item.spoiler || false
+            };
+        });
+    }
+
+    return raw;
+}
 
 function buildReviewedComponents(
     originalComponents,
@@ -2348,10 +2852,18 @@ function buildReviewedComponents(
     reviewer
 ) {
     return originalComponents.map(
-        container => {
+        original => {
+            const rawContainer =
+                typeof original.toJSON === "function"
+                    ? original.toJSON()
+                    : original;
+
+            const container =
+                cleanRawComponent(rawContainer);
+
             if (
                 container.type !== 17 ||
-                !container.components
+                !Array.isArray(container.components)
             ) {
                 return container;
             }
@@ -2363,15 +2875,13 @@ function buildReviewedComponents(
                     container.components.map(
                         component => {
                             if (
-                                component.type ===
-                                    1 &&
-                                component.components
+                                component.type === 1 &&
+                                Array.isArray(component.components)
                             ) {
-                                const hasButtons =
+                                const hasReviewButtons =
                                     component.components.some(
                                         button =>
-                                            button.type ===
-                                                2 &&
+                                            button.type === 2 &&
                                             (
                                                 button.custom_id?.startsWith(
                                                     "staff_application_approve:"
@@ -2382,9 +2892,7 @@ function buildReviewedComponents(
                                             )
                                     );
 
-                                if (
-                                    !hasButtons
-                                ) {
+                                if (!hasReviewButtons) {
                                     return component;
                                 }
 
@@ -2418,8 +2926,7 @@ function buildReviewedComponents(
                             }
 
                             if (
-                                component.type ===
-                                    10 &&
+                                component.type === 10 &&
                                 typeof component.content ===
                                     "string" &&
                                 component.content.startsWith(
@@ -2497,13 +3004,21 @@ async function approveApplication(
     );
 
     await interaction.update({
+        flags:
+            MessageFlags.IsComponentsV2,
+
         components:
             buildReviewedComponents(
                 interaction.message.components,
                 "approved",
                 interaction.user
             )
-    }).catch(console.error);
+    }).catch(error => {
+        console.error(
+            "[APPROVE] Could not update the review panel:",
+            error
+        );
+    });
 
     const member =
         await interaction.guild.members.fetch(
@@ -2514,7 +3029,12 @@ async function approveApplication(
         await member.roles.add(
             TRAINEE_ROLE_ID,
             `Staff application approved by ${interaction.user.tag}`
-        ).catch(console.error);
+        ).catch(error => {
+            console.error(
+                "[APPROVE] Could not give the Trainee role:",
+                error
+            );
+        });
     }
 
     const applicant =
@@ -2537,17 +3057,26 @@ Please be on the lookout in the **Training** category for updates and training s
         }).catch(() => {});
     }
 
+    // Make sure the results images are loaded
+    await loadApplicationImages();
+
     const resultsChannel =
         await client.channels.fetch(
             RESULTS_CHANNEL_ID
-        ).catch(() => null);
+        ).catch(error => {
+            console.error(
+                "[RESULTS] Could not fetch the results channel:",
+                error.message
+            );
+
+            return null;
+        });
 
     if (resultsChannel) {
-        await resultsChannel.send({
-            flags:
-                MessageFlags.IsComponentsV2,
-
-            components: [
+        await sendApplicationPanel(
+            resultsChannel,
+            ["results", "bottom"],
+            useAttachments => [
                 {
                     type: 17,
 
@@ -2559,7 +3088,10 @@ Please be on the lookout in the **Training** category for updates and training s
                                 {
                                     media: {
                                         url:
-                                            TOP_IMAGE
+                                            applicationImageUrl(
+                                                "results",
+                                                useAttachments
+                                            )
                                     }
                                 }
                             ]
@@ -2619,7 +3151,10 @@ Please be on the lookout in the **Training** category for updates and training s
                                 {
                                     media: {
                                         url:
-                                            BOTTOM_IMAGE
+                                            applicationImageUrl(
+                                                "bottom",
+                                                useAttachments
+                                            )
                                     }
                                 }
                             ]
@@ -2627,7 +3162,16 @@ Please be on the lookout in the **Training** category for updates and training s
                     ]
                 }
             ]
-        }).catch(console.error);
+        ).catch(error => {
+            console.error(
+                "[RESULTS] Could not post the results message:",
+                error
+            );
+        });
+    } else {
+        console.error(
+            `[RESULTS] Results channel ${RESULTS_CHANNEL_ID} was not found or the bot cannot see it.`
+        );
     }
 
     for (
@@ -2705,13 +3249,21 @@ async function denyApplication(
     );
 
     await interaction.update({
+        flags:
+            MessageFlags.IsComponentsV2,
+
         components:
             buildReviewedComponents(
                 interaction.message.components,
                 "denied",
                 interaction.user
             )
-    }).catch(console.error);
+    }).catch(error => {
+        console.error(
+            "[DENY] Could not update the review panel:",
+            error
+        );
+    });
 
     const applicant =
         await client.users.fetch(
@@ -2723,103 +3275,14 @@ async function denyApplication(
             content:
 `# Staff Application Result
 
-We regret to inform you that your staff application for **Los Angeles State Roleplay** has been **denied**.
+Thank you for taking the time to apply for the staff team at **Los Angeles State Roleplay**.
 
-We appreciate the time and effort you put into completing your application.
+Unfortunately, your staff application has been **denied** at this time.
 
-**Denied by:** ${interaction.user}`
+We encourage you to continue being active in our community and to apply again in the future.
+
+**Reviewed by:** ${interaction.user}`
         }).catch(() => {});
-    }
-
-    const resultsChannel =
-        await client.channels.fetch(
-            RESULTS_CHANNEL_ID
-        ).catch(() => null);
-
-    if (resultsChannel) {
-        await resultsChannel.send({
-            flags:
-                MessageFlags.IsComponentsV2,
-
-            components: [
-                {
-                    type: 17,
-
-                    components: [
-                        {
-                            type: 12,
-
-                            items: [
-                                {
-                                    media: {
-                                        url:
-                                            TOP_IMAGE
-                                    }
-                                }
-                            ]
-                        },
-
-                        {
-                            type: 14,
-                            spacing: 2,
-                            divider: true
-                        },
-
-                        {
-                            type: 10,
-
-                            content:
-`# Application Result
-
-> We regret to inform you that **<@${applicantId}>** was not successful with their staff application on this occasion.`
-                        },
-
-                        {
-                            type: 14,
-                            spacing: 1,
-                            divider: true
-                        },
-
-                        {
-                            type: 10,
-
-                            content:
-`# Thank You
-
-> We appreciate the time and effort you put into completing your application.
-
-> We encourage you to remain active within the community and wish you the best with any future applications.`
-                        },
-
-                        {
-                            type: 14,
-                            spacing: 1,
-                            divider: true
-                        },
-
-                        {
-                            type: 10,
-
-                            content:
-`**Denied by:** ${interaction.user}`
-                        },
-
-                        {
-                            type: 12,
-
-                            items: [
-                                {
-                                    media: {
-                                        url:
-                                            BOTTOM_IMAGE
-                                    }
-                                }
-                            ]
-                        }
-                    ]
-                }
-            ]
-        }).catch(console.error);
     }
 
     for (
@@ -2877,6 +3340,12 @@ client.once(
         console.log(
             `Connected Guilds: ${client.guilds.cache.size}`
         );
+
+        // ==================================================
+        // LOAD APPLICATION IMAGES
+        // ==================================================
+
+        await loadApplicationImages(true);
 
         // ==================================================
         // REGISTER COMMANDS
@@ -3107,6 +3576,68 @@ Please make sure you are familiar with the current Discord rules before using ou
 
                     flags:
                         MessageFlags.Ephemeral
+                });
+
+                return;
+            }
+
+            // ==================================================
+            // HR INFORMATION
+            // ==================================================
+
+            if (
+                interaction.isButton() &&
+                interaction.customId === "hr_information"
+            ) {
+                await interaction.reply({
+                    content:
+`# Punishment Appeals
+
+**Punishment Appeal**
+
+**My ROBLOX Username:**
+**Punishment Type:**
+**Punishment Reason:**
+**Why should we accept your appeal?**
+
+
+# Ingame Ban Appeals
+
+**Ban Appeal**
+
+**My ROBLOX Username:**
+**Ban Reason:**
+**Why should we accept your appeal?**
+
+
+# Fast Pass
+
+**Fast-Pass**
+
+**Your ROBLOX User:**
+**All your previous experiences, please include membercount and your rank. Server invite CODE, if possible:**
+**Why do I want to be staff here?**
+
+
+# Staff Transfer
+
+**Staff Transfer**
+
+**Your ROBLOX User:**
+**All your previous experiences, please include membercount and your rank. Server invite CODE, if possible:**
+**Why do I want to be staff here?**
+
+
+# Staff Report
+
+**Staff Report**
+
+**My ROBLOX Username:**
+**Suspect:**
+**Context of Scene:**
+**Why are you reporting them?**
+**Evidence:**`,
+                    flags: MessageFlags.Ephemeral
                 });
 
                 return;
@@ -3953,7 +4484,9 @@ client.on(
     async message => {
         if (message.author.bot)
             return;
-await handleERLCMessage(message);
+
+        await handleERLCMessage(message);
+
         const application =
             applications.get(
                 message.channel.id
@@ -4130,8 +4663,26 @@ client.on(
 );
 
 // ======================================================
+
 // LOGIN
+
 // ======================================================
+
+const https = require("https");
+
+https.get("https://api.ipify.org", (res) => {
+    let ip = "";
+
+    res.on("data", (chunk) => {
+        ip += chunk;
+    });
+
+    res.on("end", () => {
+        console.log(`[ER:LC] Railway Public IP: ${ip}`);
+    });
+}).on("error", (err) => {
+    console.error("[ER:LC] Failed to get public IP:", err.message);
+});
 
 client.login(
     process.env.TOKEN
