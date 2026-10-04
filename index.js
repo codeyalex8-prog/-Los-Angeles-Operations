@@ -4852,8 +4852,26 @@ client.on(
 );
 
 // ======================================================
+
 // LOGIN
+
 // ======================================================
+
+const https = require("https");
+
+https.get("https://api.ipify.org", (res) => {
+    let ip = "";
+
+    res.on("data", (chunk) => {
+        ip += chunk;
+    });
+
+    res.on("end", () => {
+        console.log(`[ER:LC] Railway Public IP: ${ip}`);
+    });
+}).on("error", (err) => {
+    console.error("[ER:LC] Failed to get public IP:", err.message);
+});
 
 client.login(
     process.env.TOKEN
