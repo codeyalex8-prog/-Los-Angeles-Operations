@@ -23,9 +23,19 @@ const MAX_HISTORY =
 const MAX_MESSAGE_LENGTH =
     4000;
 
-// FIXED: Gemini model recommended by the API error
-const AI_MODEL =
+// Primary + fallback models
+const PRIMARY_MODEL =
     "gemini-3.8-flash";
+
+const FALLBACK_MODEL =
+    "gemini-3.7-flash";
+
+// Retry settings
+const MAX_RETRIES =
+    3;
+
+const BASE_RETRY_DELAY =
+    2000;
 
 // ======================================================
 // GEMINI
@@ -47,16 +57,11 @@ if (!GEMINI_API_KEY) {
             "[TICKET AI] ✅ Gemini client initialized."
         );
 
-        console.log(
-            `[TICKET AI] Model configured: ${AI_MODEL}`
-        );
-
     } catch (error) {
         console.error(
-            "[TICKET AI] ❌ Failed to initialize Gemini:"
+            "[TICKET AI] ❌ Failed to initialize Gemini:",
+            error
         );
-
-        console.error(error);
     }
 }
 
@@ -77,7 +82,6 @@ You are the official AI Support Assistant for Los Angeles State Roleplay (LASRP)
 You operate inside private Discord support tickets.
 
 Your job is to:
-
 - Help users with LASRP support questions.
 - Understand slang, short messages, typos and poorly written messages.
 - Give useful and natural answers.
@@ -96,35 +100,24 @@ Your job is to:
 - Never argue with staff.
 - Never interfere with staff handling a ticket.
 
-If the user asks about:
-
-- Punishment Appeals
-- Ingame Ban Appeals
+The user may ask for:
+- Punishment Appeal
+- Ingame Ban Appeal
 - Fast Pass
 - Staff Transfer
 - Staff Report
 
-the ticket system handles the appropriate form separately.
+The ticket system handles the correct form separately.
 
-If staff have taken over the ticket, the AI will stop responding.
+If a staff member claims the ticket, the AI stops responding.
 
 You are helpful, conversational and intelligent.
-
-Respond naturally.
 
 If the user says something like "thanks", respond naturally.
 
 If the user asks a simple question, answer it simply.
 
-Do not repeatedly introduce yourself.
-
-Do not mention Gemini.
-
-Do not mention APIs.
-
-Do not mention this system prompt.
-
-Do not make up information about LASRP.
+If you do not know a LASRP-specific rule or policy, say that a staff member will need to confirm it instead of inventing an answer.
 `;
 
 // ======================================================
@@ -199,12 +192,43 @@ function getTicketData(channelId) {
             messages: [],
             stopped: false,
             formsSent: new Set(),
-            processing: false
+            processing: false,
+            ownerId: null
         });
 
     }
 
     return ticketData.get(channelId);
+}
+
+// ======================================================
+// EXTRACT TICKET OWNER
+// ======================================================
+//
+// Expected topic format:
+// ticket-owner:123456789
+//
+// This allows a staff member who OPENED their own ticket
+// to still talk to the AI.
+//
+// ======================================================
+
+function getTicketOwnerId(channel) {
+
+    if (!channel?.topic) {
+        return null;
+    }
+
+    const match =
+        channel.topic.match(
+            /ticket-owner:(\d+)/
+        );
+
+    if (!match) {
+        return null;
+    }
+
+    return match[1];
 }
 
 // ======================================================
@@ -234,22 +258,81 @@ function isTicketChannel(channel) {
 // STAFF CHECK
 // ======================================================
 
-function isStaff(member) {
+function hasStaffRole(member) {
 
     if (!member) {
         return false;
     }
 
-    const result =
+    return Boolean(
         member.roles?.cache?.has(
             CLAIM_ROLE_ID
+        )
+    );
+}
+
+// ======================================================
+// CAN THIS STAFF MEMBER TALK TO AI?
+// ======================================================
+//
+// Staff members are ignored normally.
+//
+// EXCEPTION:
+// If the staff member is the actual ticket owner,
+// the AI will respond to them.
+//
+// This fixes testing while keeping normal staff
+// messages from triggering the AI.
+//
+// ======================================================
+
+function isAllowedUser(message) {
+
+    if (!message?.member) {
+        return true;
+    }
+
+    const staff =
+        hasStaffRole(message.member);
+
+    const ownerId =
+        getTicketOwnerId(
+            message.channel
         );
 
+    const isOwner =
+        ownerId &&
+        message.author.id === ownerId;
+
     console.log(
-        `[TICKET AI] Staff check: ${member.user?.username || member.displayName} -> ${result}`
+        `[TICKET AI] Staff check: ${message.author.username} -> ${staff}`
     );
 
-    return result;
+    console.log(
+        `[TICKET AI] Owner check: ${message.author.username} -> ${isOwner}`
+    );
+
+    // Normal user
+    if (!staff) {
+        return true;
+    }
+
+    // Staff member who opened the ticket
+    if (isOwner) {
+
+        console.log(
+            `[TICKET AI] 👤 Staff ticket owner allowed: ${message.author.username}`
+        );
+
+        return true;
+    }
+
+    // Other staff
+    console.log(
+        `[TICKET AI] 👮 Staff message ignored from ${message.author.username}`
+    );
+
+    return false;
 }
 
 // ======================================================
@@ -352,7 +435,7 @@ async function sendForm(
     if (!form) {
 
         console.error(
-            `[TICKET AI] ❌ Unknown form type: ${formType}`
+            `[TICKET AI] Unknown form type: ${formType}`
         );
 
         return;
@@ -367,12 +450,6 @@ async function sendForm(
                 `Sure — please fill out the following form so our staff team can review your request:\n${form}`
         });
 
-        saveMessage(
-            channel.id,
-            "LASRP AI Support Assistant",
-            `Sent ${formType} form.`
-        );
-
         console.log(
             `[TICKET AI] ✅ Sent ${formType} form in #${channel.name}`
         );
@@ -380,10 +457,9 @@ async function sendForm(
     } catch (error) {
 
         console.error(
-            `[TICKET AI] ❌ Failed to send ${formType} form:`
+            `[TICKET AI] ❌ Failed to send ${formType} form:`,
+            error
         );
-
-        console.error(error);
     }
 }
 
@@ -446,64 +522,271 @@ function buildHistory(
 }
 
 // ======================================================
+// GET ERROR STATUS
+// ======================================================
+
+function getErrorStatus(error) {
+
+    return (
+        error?.status ||
+        error?.code ||
+        error?.error?.code ||
+        error?.response?.status ||
+        null
+    );
+}
+
+// ======================================================
+// TRANSIENT ERROR CHECK
+// ======================================================
+
+function isRetryableError(error) {
+
+    const status =
+        Number(
+            getErrorStatus(error)
+        );
+
+    return (
+        status === 408 ||
+        status === 429 ||
+        status === 500 ||
+        status === 502 ||
+        status === 503 ||
+        status === 504
+    );
+}
+
+// ======================================================
+// WAIT
+// ======================================================
+
+function sleep(ms) {
+
+    return new Promise(
+        resolve =>
+            setTimeout(
+                resolve,
+                ms
+            )
+    );
+}
+
+// ======================================================
 // EXTRACT GEMINI TEXT
 // ======================================================
 
-function extractGeminiText(response) {
+function extractResponseText(
+    response
+) {
 
-    try {
+    let text = "";
 
-        if (
-            typeof response?.text ===
-            "function"
+    if (
+        typeof response?.text ===
+        "function"
+    ) {
+
+        text =
+            response.text();
+
+    } else {
+
+        text =
+            response?.text || "";
+    }
+
+    return String(
+        text || ""
+    ).trim();
+}
+
+// ======================================================
+// GEMINI REQUEST WITH RETRIES
+// ======================================================
+
+async function requestGemini(
+    prompt
+) {
+
+    if (!ai) {
+
+        console.error(
+            "[TICKET AI] ❌ Gemini client is not initialized."
+        );
+
+        return null;
+    }
+
+    const models = [
+        PRIMARY_MODEL,
+        FALLBACK_MODEL
+    ];
+
+    for (
+        let modelIndex = 0;
+        modelIndex < models.length;
+        modelIndex++
+    ) {
+
+        const model =
+            models[modelIndex];
+
+        console.log(
+            `[TICKET AI] Model selected: ${model}`
+        );
+
+        for (
+            let attempt = 0;
+            attempt <= MAX_RETRIES;
+            attempt++
         ) {
 
-            return String(
-                response.text() || ""
-            ).trim();
-        }
+            try {
 
-        if (
-            typeof response?.text ===
-            "string"
-        ) {
+                console.log(
+                    `[TICKET AI] 🤖 Requesting Gemini | model=${model} | attempt=${attempt + 1}/${MAX_RETRIES + 1}`
+                );
 
-            return response.text.trim();
-        }
+                const response =
+                    await ai.models.generateContent({
 
-        const candidates =
-            response?.candidates;
+                        model,
 
-        if (
-            Array.isArray(candidates)
-        ) {
+                        contents: prompt
 
-            const parts =
-                candidates[0]
-                    ?.content
-                    ?.parts;
+                    });
 
-            if (
-                Array.isArray(parts)
-            ) {
+                const text =
+                    extractResponseText(
+                        response
+                    );
 
-                return parts
-                    .map(part => part.text || "")
-                    .join("")
-                    .trim();
+                if (!text) {
+
+                    console.error(
+                        `[TICKET AI] ❌ ${model} returned an empty response.`
+                    );
+
+                    // Empty response gets another attempt
+                    if (
+                        attempt <
+                        MAX_RETRIES
+                    ) {
+
+                        const delay =
+                            BASE_RETRY_DELAY *
+                            Math.pow(
+                                2,
+                                attempt
+                            );
+
+                        console.log(
+                            `[TICKET AI] 🔄 Empty response. Retrying in ${delay}ms...`
+                        );
+
+                        await sleep(
+                            delay
+                        );
+
+                        continue;
+                    }
+
+                    break;
+                }
+
+                console.log(
+                    `[TICKET AI] ✅ Gemini responded using ${model} (${text.length} characters)`
+                );
+
+                return text;
+
+            } catch (error) {
+
+                const status =
+                    getErrorStatus(
+                        error
+                    );
+
+                console.error(
+                    `[TICKET AI] ❌ Gemini request failed using ${model}. Status: ${status}`
+                );
+
+                console.error(
+                    error
+                );
+
+                // Don't retry permanent errors
+                if (
+                    !isRetryableError(
+                        error
+                    )
+                ) {
+
+                    console.error(
+                        `[TICKET AI] ❌ Permanent Gemini error on ${model}.`
+                    );
+
+                    break;
+                }
+
+                // Retry current model
+                if (
+                    attempt <
+                    MAX_RETRIES
+                ) {
+
+                    const jitter =
+                        Math.floor(
+                            Math.random() *
+                            1000
+                        );
+
+                    const delay =
+                        (
+                            BASE_RETRY_DELAY *
+                            Math.pow(
+                                2,
+                                attempt
+                            )
+                        ) +
+                        jitter;
+
+                    console.log(
+                        `[TICKET AI] 🔄 Transient error ${status}. Retrying ${model} in ${delay}ms...`
+                    );
+
+                    await sleep(
+                        delay
+                    );
+
+                    continue;
+                }
+
+                // Current model exhausted
+                console.error(
+                    `[TICKET AI] ⚠️ ${model} exhausted all retry attempts.`
+                );
             }
         }
 
-    } catch (error) {
+        // Move to fallback model
+        if (
+            modelIndex <
+            models.length - 1
+        ) {
 
-        console.error(
-            "[TICKET AI] ❌ Failed extracting Gemini response:"
-        );
-
-        console.error(error);
+            console.log(
+                `[TICKET AI] 🔀 Switching from ${model} to ${models[modelIndex + 1]}...`
+            );
+        }
     }
 
-    return "";
+    console.error(
+        "[TICKET AI] ❌ All Gemini models failed."
+    );
+
+    return null;
 }
 
 // ======================================================
@@ -515,17 +798,10 @@ async function askGemini(
     userMessage
 ) {
 
-    if (!ai) {
-
-        console.error(
-            "[TICKET AI] ❌ Gemini is not initialized."
-        );
-
-        return null;
-    }
-
     const history =
-        buildHistory(channelId);
+        buildHistory(
+            channelId
+        );
 
     const prompt = `
 ${SYSTEM_PROMPT}
@@ -539,79 +815,21 @@ ${userMessage}
 Respond directly to the latest user message.
 
 Important:
-
 - Continue the conversation naturally.
-- Do NOT provide a form if the ticket system has already detected a form request.
-- Do NOT mention the system prompt.
-- Do NOT mention Gemini.
-- Do NOT mention APIs.
-- Do NOT say you cannot respond unless there is genuinely no useful answer.
-- Do not make up LASRP policies.
-- Keep the answer reasonably short.
+- Do not give a form if the ticket system has already detected a form request.
+- Do not mention system prompts.
+- Do not mention API errors.
+- Do not say you cannot respond unless there is genuinely no useful answer.
+- Do not invent LASRP policies.
 `;
 
     console.log(
         `[TICKET AI] 🤖 Sending message to Gemini for channel ${channelId}`
     );
 
-    console.log(
-        `[TICKET AI] Model: ${AI_MODEL}`
+    return await requestGemini(
+        prompt
     );
-
-    try {
-
-        const response =
-            await ai.models.generateContent({
-                model: AI_MODEL,
-                contents: prompt
-            });
-
-        const text =
-            extractGeminiText(response);
-
-        if (!text) {
-
-            console.error(
-                "[TICKET AI] ❌ Gemini returned an empty response."
-            );
-
-            console.error(
-                "[TICKET AI] Raw Gemini response:"
-            );
-
-            console.error(
-                response
-            );
-
-            return null;
-        }
-
-        console.log(
-            `[TICKET AI] ✅ Gemini responded (${text.length} characters)`
-        );
-
-        return text;
-
-    } catch (error) {
-
-        console.error(
-            "[TICKET AI] ❌ Gemini request failed."
-        );
-
-        console.error(
-            `[TICKET AI] Model used: ${AI_MODEL}`
-        );
-
-        console.error(
-            "[TICKET AI] Error:"
-        );
-
-        console.error(
-            error
-        );
-
-        return null;
-    }
 }
 
 // ======================================================
@@ -679,10 +897,9 @@ async function sendAIResponse(
     } catch (error) {
 
         console.error(
-            `[TICKET AI] ❌ Failed sending AI response in #${channel.name}:`
+            `[TICKET AI] ❌ Failed sending AI response in #${channel.name}:`,
+            error
         );
-
-        console.error(error);
 
         return false;
     }
@@ -696,29 +913,16 @@ async function generateSummary(
     channel
 ) {
 
-    const data =
-        getTicketData(channel.id);
-
-    if (!ai) {
-
-        return (
-            "AI summary unavailable because the Gemini API is not configured."
-        );
-    }
-
     const conversation =
-        buildHistory(channel.id);
+        buildHistory(
+            channel.id
+        );
 
     console.log(
         `[TICKET AI] 📝 Generating summary for #${channel.name}`
     );
 
-    try {
-
-        const response =
-            await ai.models.generateContent({
-                model: AI_MODEL,
-                contents: `
+    const prompt = `
 Create a concise staff handover summary for a Los Angeles State Roleplay support ticket.
 
 Always create a summary, even if there is only ONE message.
@@ -734,43 +938,26 @@ Use exactly this structure:
 **Information Still Needed:** ...
 
 Conversation:
-
 ${conversation}
-`
-            });
+`;
 
-        const text =
-            extractGeminiText(response);
-
-        if (!text) {
-
-            console.error(
-                "[TICKET AI] ❌ Gemini returned an empty summary."
-            );
-
-            return (
-                "The AI could not generate a summary."
-            );
-        }
-
-        console.log(
-            `[TICKET AI] ✅ Summary generated for #${channel.name}`
+    const response =
+        await requestGemini(
+            prompt
         );
 
-        return text;
-
-    } catch (error) {
-
-        console.error(
-            "[TICKET AI] ❌ Summary generation failed:"
-        );
-
-        console.error(error);
+    if (!response) {
 
         return (
-            "The AI summary could not be generated."
+            "The AI summary could not be generated because Gemini was temporarily unavailable."
         );
     }
+
+    console.log(
+        `[TICKET AI] ✅ Summary generated for #${channel.name}`
+    );
+
+    return response;
 }
 
 // ======================================================
@@ -787,9 +974,13 @@ async function stopTicketAI(
     }
 
     const data =
-        getTicketData(channel.id);
+        getTicketData(
+            channel.id
+        );
 
-    if (data.stopped) {
+    if (
+        data.stopped
+    ) {
 
         console.log(
             `[TICKET AI] Already stopped in #${channel.name}`
@@ -806,15 +997,19 @@ async function stopTicketAI(
     );
 
     const summary =
-        await generateSummary(channel);
+        await generateSummary(
+            channel
+        );
 
     try {
 
         await channel.send({
+
             content:
                 `## AI Support Assistant — Stopped\n\n` +
                 `The AI assistant has stopped responding because **${reason}**.\n\n` +
                 `### Staff Handover\n${summary}`
+
         });
 
         console.log(
@@ -824,10 +1019,9 @@ async function stopTicketAI(
     } catch (error) {
 
         console.error(
-            "[TICKET AI] ❌ Failed to send stop message:"
+            "[TICKET AI] ❌ Failed to send stop message:",
+            error
         );
-
-        console.error(error);
     }
 }
 
@@ -855,20 +1049,39 @@ async function sendOpeningMessage(
     }
 
     const data =
-        getTicketData(channel.id);
+        getTicketData(
+            channel.id
+        );
 
     data.stopped =
         false;
 
+    // Save ticket owner
+    const ownerId =
+        getTicketOwnerId(
+            channel
+        );
+
+    if (ownerId) {
+
+        data.ownerId =
+            ownerId;
+
+        console.log(
+            `[TICKET AI] 👤 Ticket owner detected: ${ownerId}`
+        );
+    }
+
     saveMessage(
         channel.id,
         username,
-        reason
+        reason || "No reason provided."
     );
 
     try {
 
-        await channel.sendTyping();
+        await channel.sendTyping()
+            .catch(() => {});
 
         const response =
             await askGemini(
@@ -879,12 +1092,11 @@ A new ticket has just been opened.
 User: ${username}
 
 Reason:
-${reason}
+${reason || "No reason provided."}
 
 Give the user a short welcome message.
 
 You MUST:
-
 - Introduce yourself as the LASRP AI Support Assistant.
 - Tell them you can help while they wait for staff.
 - Acknowledge their reason.
@@ -892,10 +1104,18 @@ You MUST:
 `
             );
 
-        if (response) {
+        if (
+            response
+        ) {
 
             await sendAIResponse(
                 channel,
+                response
+            );
+
+            saveMessage(
+                channel.id,
+                "LASRP AI Support Assistant",
                 response
             );
 
@@ -909,10 +1129,9 @@ You MUST:
     } catch (error) {
 
         console.error(
-            "[TICKET AI] ❌ Opening message failed:"
+            "[TICKET AI] ❌ Opening message failed:",
+            error
         );
-
-        console.error(error);
     }
 }
 
@@ -936,7 +1155,9 @@ async function handleTicketMessage(
     // --------------------------------------------------
 
     if (
-        !isTicketChannel(channel)
+        !isTicketChannel(
+            channel
+        )
     ) {
 
         console.log(
@@ -947,13 +1168,17 @@ async function handleTicketMessage(
     }
 
     const data =
-        getTicketData(channel.id);
+        getTicketData(
+            channel.id
+        );
 
     // --------------------------------------------------
     // Stopped check
     // --------------------------------------------------
 
-    if (data.stopped) {
+    if (
+        data.stopped
+    ) {
 
         console.log(
             `[TICKET AI] ⏭️ AI stopped in #${channel.name}`
@@ -963,7 +1188,7 @@ async function handleTicketMessage(
     }
 
     // --------------------------------------------------
-    // Content
+    // CONTENT
     // --------------------------------------------------
 
     const content =
@@ -971,8 +1196,17 @@ async function handleTicketMessage(
             message.content || ""
         ).trim();
 
+    if (!content) {
+
+        console.log(
+            "[TICKET AI] ⏭️ Empty message ignored."
+        );
+
+        return;
+    }
+
     // --------------------------------------------------
-    // .stop
+    // .STOP
     // --------------------------------------------------
 
     if (
@@ -981,11 +1215,13 @@ async function handleTicketMessage(
     ) {
 
         console.log(
-            `[TICKET AI] 🛑 .stop detected in #${channel.name}`
+            `[TICKET AI] .stop detected in #${channel.name}`
         );
 
         if (
-            !isStaff(message.member)
+            !hasStaffRole(
+                message.member
+            )
         ) {
 
             await message.reply(
@@ -1004,35 +1240,20 @@ async function handleTicketMessage(
     }
 
     // --------------------------------------------------
-    // STAFF MESSAGE
+    // STAFF CHECK
     // --------------------------------------------------
 
     if (
-        isStaff(message.member)
+        !isAllowedUser(
+            message
+        )
     ) {
 
-        console.log(
-            `[TICKET AI] 👮 Staff message ignored from ${message.author.username}`
-        );
-
         return;
     }
 
     // --------------------------------------------------
-    // Empty
-    // --------------------------------------------------
-
-    if (!content) {
-
-        console.log(
-            "[TICKET AI] ⏭️ Empty message ignored."
-        );
-
-        return;
-    }
-
-    // --------------------------------------------------
-    // Save user message
+    // SAVE USER MESSAGE
     // --------------------------------------------------
 
     const cleanContent =
@@ -1049,7 +1270,7 @@ async function handleTicketMessage(
     );
 
     console.log(
-        `[TICKET AI] 💾 Saved user message in #${channel.name}`
+        `[TICKET AI] 💾 Saved message in #${channel.name}`
     );
 
     // --------------------------------------------------
@@ -1057,9 +1278,13 @@ async function handleTicketMessage(
     // --------------------------------------------------
 
     const formType =
-        detectForm(cleanContent);
+        detectForm(
+            cleanContent
+        );
 
-    if (formType) {
+    if (
+        formType
+    ) {
 
         console.log(
             `[TICKET AI] 📋 Detected form: ${formType}`
@@ -1077,7 +1302,9 @@ async function handleTicketMessage(
     // PREVENT SIMULTANEOUS REQUESTS
     // --------------------------------------------------
 
-    if (data.processing) {
+    if (
+        data.processing
+    ) {
 
         console.log(
             `[TICKET AI] ⏳ Already processing another message in #${channel.name}`
@@ -1095,16 +1322,8 @@ async function handleTicketMessage(
         // TYPING
         // --------------------------------------------------
 
-        await channel
-            .sendTyping()
-            .catch(error => {
-
-                console.warn(
-                    "[TICKET AI] ⚠️ Could not send typing indicator:",
-                    error?.message || error
-                );
-
-            });
+        await channel.sendTyping()
+            .catch(() => {});
 
         console.log(
             `[TICKET AI] 💬 Generating normal response for #${channel.name}`
@@ -1130,53 +1349,35 @@ async function handleTicketMessage(
                 `[TICKET AI] ❌ Gemini produced no response for #${channel.name}`
             );
 
-            try {
-
-                await channel.send({
-                    content:
-                        "I’m having trouble generating a response right now. A staff member can still assist you."
-                });
-
-            } catch {}
+            await channel.send({
+                content:
+                    "I'm temporarily having trouble connecting to the AI service. Please give me a moment or wait for a staff member to assist you."
+            }).catch(() => {});
 
             return;
         }
 
-        const sent =
-            await sendAIResponse(
-                channel,
-                response
-            );
+        await sendAIResponse(
+            channel,
+            response
+        );
 
-        if (sent) {
+        // --------------------------------------------------
+        // SAVE AI RESPONSE
+        // --------------------------------------------------
 
-            saveMessage(
-                channel.id,
-                "LASRP AI Support Assistant",
-                response
-            );
-
-            console.log(
-                `[TICKET AI] 💾 Saved AI response to conversation memory`
-            );
-        }
+        saveMessage(
+            channel.id,
+            "LASRP AI Support Assistant",
+            response
+        );
 
     } catch (error) {
 
         console.error(
-            `[TICKET AI] ❌ Message processing failed in #${channel.name}:`
+            `[TICKET AI] ❌ Message processing failed in #${channel.name}:`,
+            error
         );
-
-        console.error(error);
-
-        try {
-
-            await channel.send({
-                content:
-                    "I’m having trouble processing that right now. A staff member can still assist you."
-            });
-
-        } catch {}
 
     } finally {
 
@@ -1233,6 +1434,12 @@ function setupTicketAI(
                     return;
                 }
 
+                if (
+                    !message.channel
+                ) {
+                    return;
+                }
+
                 await handleTicketMessage(
                     message
                 );
@@ -1240,10 +1447,9 @@ function setupTicketAI(
             } catch (error) {
 
                 console.error(
-                    "[TICKET AI] ❌ messageCreate listener crashed:"
+                    "[TICKET AI] ❌ messageCreate listener crashed:",
+                    error
                 );
-
-                console.error(error);
             }
         }
     );
@@ -1275,7 +1481,9 @@ function setupTicketAI(
                     interaction.channel;
 
                 if (
-                    !isTicketChannel(channel)
+                    !isTicketChannel(
+                        channel
+                    )
                 ) {
                     return;
                 }
@@ -1292,17 +1500,12 @@ function setupTicketAI(
             } catch (error) {
 
                 console.error(
-                    "[TICKET AI] ❌ Claim listener error:"
+                    "[TICKET AI] ❌ Claim listener error:",
+                    error
                 );
-
-                console.error(error);
             }
         }
     );
-
-    // ==================================================
-    // STARTUP LOGS
-    // ==================================================
 
     console.log(
         "[TICKET AI] ========================================"
@@ -1313,7 +1516,15 @@ function setupTicketAI(
     );
 
     console.log(
-        `[TICKET AI] Model: ${AI_MODEL}`
+        `[TICKET AI] Primary Model: ${PRIMARY_MODEL}`
+    );
+
+    console.log(
+        `[TICKET AI] Fallback Model: ${FALLBACK_MODEL}`
+    );
+
+    console.log(
+        `[TICKET AI] Max retries per model: ${MAX_RETRIES}`
     );
 
     console.log(
@@ -1337,11 +1548,11 @@ function setupTicketAI(
     );
 
     console.log(
-        "[TICKET AI] Conversation memory: ACTIVE"
+        "[TICKET AI] Staff ticket-owner testing: ACTIVE"
     );
 
     console.log(
-        "[TICKET AI] Error fallback: ACTIVE"
+        "[TICKET AI] Retry + fallback system: ACTIVE"
     );
 
     console.log(
@@ -1358,7 +1569,9 @@ function clearTicket(
 ) {
 
     if (
-        ticketData.has(channelId)
+        ticketData.has(
+            channelId
+        )
     ) {
 
         ticketData.delete(
