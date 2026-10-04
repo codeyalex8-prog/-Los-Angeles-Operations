@@ -2302,6 +2302,12 @@ async function createStaffApplication(
             MessageFlags.Ephemeral
     });
 
+    // A new application means any earlier review of this
+    // person no longer blocks reviewing the new one
+    reviewedApplications.delete(
+        interaction.user.id
+    );
+
     // Make sure the application images are loaded
     await loadApplicationImages();
 
@@ -2958,123 +2964,107 @@ function buildReviewedComponents(
 }
 
 // ======================================================
-// APPROVE APPLICATION
+// POST APPROVAL RESULTS
+// ======================================================
+//
+// Posts the "Results" message in the results channel.
+// Returns { ok, reason } so the reviewer can be told in
+// Discord exactly what happened (no console needed).
+//
+// 1. Checks the bot can see/send in the results channel
+// 2. Tries the full panel with uploaded images
+// 3. Falls back to plain image links
+// 4. Falls back to a plain text message
+//
 // ======================================================
 
-async function approveApplication(
+async function postApprovalResults(
     interaction,
     applicantId
 ) {
-    if (
-        !hasApplicationReviewPermission(
-            interaction.member
-        )
-    ) {
-        return interaction.reply({
-            content:
-                "You don't have permission to review staff applications.",
-            flags:
-                MessageFlags.Ephemeral
-        });
-    }
-
-    if (
-        reviewedApplications.has(
-            applicantId
-        )
-    ) {
-        return interaction.reply({
-            content:
-                "This application has already been reviewed.",
-            flags:
-                MessageFlags.Ephemeral
-        });
-    }
-
-    reviewedApplications.add(
-        applicantId
-    );
-
-    managementStats.applications.approved++;
-
-    saveManagementStats();
-
-    addManagementActivity(
-        `📋 Application approved by @${interaction.user.username}`
-    );
-
-    await interaction.update({
-        flags:
-            MessageFlags.IsComponentsV2,
-
-        components:
-            buildReviewedComponents(
-                interaction.message.components,
-                "approved",
-                interaction.user
-            )
-    }).catch(error => {
-        console.error(
-            "[APPROVE] Could not update the review panel:",
-            error
-        );
-    });
-
-    const member =
-        await interaction.guild.members.fetch(
-            applicantId
-        ).catch(() => null);
-
-    if (member) {
-        await member.roles.add(
-            TRAINEE_ROLE_ID,
-            `Staff application approved by ${interaction.user.tag}`
-        ).catch(error => {
-            console.error(
-                "[APPROVE] Could not give the Trainee role:",
-                error
-            );
-        });
-    }
-
-    const applicant =
-        await client.users.fetch(
-            applicantId
-        ).catch(() => null);
-
-    if (applicant) {
-        await applicant.send({
-            content:
-`# Staff Application Result
-
-Congratulations! Your staff application for **Los Angeles State Roleplay** has been **approved**.
-
-You have been accepted as a **Trainee** within our server.
-
-Please be on the lookout in the **Training** category for updates and training sessions from our Training Team.
-
-**Approved by:** ${interaction.user}`
-        }).catch(() => {});
-    }
-
-    // Make sure the results images are loaded
     await loadApplicationImages();
 
-    const resultsChannel =
-        await client.channels.fetch(
-            RESULTS_CHANNEL_ID
-        ).catch(error => {
-            console.error(
-                "[RESULTS] Could not fetch the results channel:",
-                error.message
+    let channel = null;
+
+    try {
+        channel =
+            await client.channels.fetch(
+                RESULTS_CHANNEL_ID
             );
+    } catch (error) {
+        console.error(
+            "[RESULTS] Could not fetch the results channel:",
+            error
+        );
 
-            return null;
-        });
+        return {
+            ok: false,
+            reason:
+                `I can't access the results channel <#${RESULTS_CHANNEL_ID}> (${error.message}). Give the bot **View Channel**, **Send Messages** and **Attach Files** there.`
+        };
+    }
 
-    if (resultsChannel) {
+    if (
+        !channel ||
+        typeof channel.send !== "function"
+    ) {
+        console.error(
+            `[RESULTS] Channel ${RESULTS_CHANNEL_ID} is not a channel the bot can send messages in.`
+        );
+
+        return {
+            ok: false,
+            reason:
+                `<#${RESULTS_CHANNEL_ID}> is not a channel I can send messages in. Check that the results channel ID is correct and is a normal text channel.`
+        };
+    }
+
+    // Permission check, so the reviewer gets a clear message
+
+    try {
+        const me =
+            channel.guild?.members.me ||
+            await channel.guild?.members
+                .fetchMe()
+                .catch(() => null);
+
+        const permissions =
+            me
+                ? channel.permissionsFor(me)
+                : null;
+
+        if (permissions) {
+            const missing =
+                permissions.missing([
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.SendMessages
+                ]);
+
+            if (missing.length) {
+                console.error(
+                    `[RESULTS] Bot is missing permissions in ${RESULTS_CHANNEL_ID}:`,
+                    missing
+                );
+
+                return {
+                    ok: false,
+                    reason:
+                        `I'm missing **${missing.join(", ")}** in <#${RESULTS_CHANNEL_ID}>. Give the bot those permissions (and **Attach Files**) in that channel.`
+                };
+            }
+        }
+    } catch (error) {
+        console.error(
+            "[RESULTS] Permission check failed:",
+            error
+        );
+    }
+
+    // Full panel (uploaded images, then image links)
+
+    try {
         await sendApplicationPanel(
-            resultsChannel,
+            channel,
             ["results", "bottom"],
             useAttachments => [
                 {
@@ -3162,17 +3152,198 @@ Please be on the lookout in the **Training** category for updates and training s
                     ]
                 }
             ]
-        ).catch(error => {
-            console.error(
-                "[RESULTS] Could not post the results message:",
-                error
-            );
-        });
-    } else {
+        );
+
+        return { ok: true };
+    } catch (error) {
         console.error(
-            `[RESULTS] Results channel ${RESULTS_CHANNEL_ID} was not found or the bot cannot see it.`
+            "[RESULTS] Could not post the results panel, trying plain text:",
+            error
         );
     }
+
+    // Last resort: plain text so the result is ALWAYS announced
+
+    try {
+        await channel.send({
+            content:
+`# Results
+
+> We would like to congratulate you on passing your application and becoming a **Trainee** within our server. Your dedication throughout your application has stood out to us and has earned you a place in our community.
+
+# Training
+
+> Please be on the lookout in our **Training** category for updates and training sessions from our Training Team.
+
+# Welcome
+
+> Once again, congratulations, **<@${applicantId}>**, and welcome to the team!
+
+**Approved by:** ${interaction.user}`,
+
+            allowedMentions: {
+                users: [applicantId]
+            }
+        });
+
+        return {
+            ok: true,
+            note:
+                "The results were posted as plain text because the fancy panel could not be sent."
+        };
+    } catch (error) {
+        console.error(
+            "[RESULTS] Plain text results also failed:",
+            error
+        );
+
+        return {
+            ok: false,
+            reason:
+                `I couldn't post in <#${RESULTS_CHANNEL_ID}>: ${error.message}`
+        };
+    }
+}
+
+// ======================================================
+// APPROVE APPLICATION
+// ======================================================
+
+async function approveApplication(
+    interaction,
+    applicantId
+) {
+    if (
+        !hasApplicationReviewPermission(
+            interaction.member
+        )
+    ) {
+        return interaction.reply({
+            content:
+                "You don't have permission to review staff applications.",
+            flags:
+                MessageFlags.Ephemeral
+        });
+    }
+
+    if (
+        reviewedApplications.has(
+            applicantId
+        )
+    ) {
+        return interaction.reply({
+            content:
+                "This application has already been reviewed.",
+            flags:
+                MessageFlags.Ephemeral
+        });
+    }
+
+    reviewedApplications.add(
+        applicantId
+    );
+
+    managementStats.applications.approved++;
+
+    saveManagementStats();
+
+    addManagementActivity(
+        `📋 Application approved by @${interaction.user.username}`
+    );
+
+    // 1. Update the review panel (must happen first)
+
+    await interaction.update({
+        flags:
+            MessageFlags.IsComponentsV2,
+
+        components:
+            buildReviewedComponents(
+                interaction.message.components,
+                "approved",
+                interaction.user
+            )
+    }).catch(error => {
+        console.error(
+            "[APPROVE] Could not update the review panel:",
+            error
+        );
+    });
+
+    // 2. Post the results message straight away
+
+    let resultsOutcome;
+
+    try {
+        resultsOutcome =
+            await postApprovalResults(
+                interaction,
+                applicantId
+            );
+    } catch (error) {
+        console.error(
+            "[RESULTS] Unexpected error:",
+            error
+        );
+
+        resultsOutcome = {
+            ok: false,
+            reason:
+                `Unexpected error while posting the results: ${error.message}`
+        };
+    }
+
+    // 3. Give the Trainee role
+
+    try {
+        const member =
+            await interaction.guild.members.fetch(
+                applicantId
+            ).catch(() => null);
+
+        if (member) {
+            await member.roles.add(
+                TRAINEE_ROLE_ID,
+                `Staff application approved by ${interaction.user.tag}`
+            );
+        }
+    } catch (error) {
+        console.error(
+            "[APPROVE] Could not give the Trainee role:",
+            error
+        );
+    }
+
+    // 4. DM the applicant
+
+    try {
+        const applicant =
+            await client.users.fetch(
+                applicantId
+            ).catch(() => null);
+
+        if (applicant) {
+            await applicant.send({
+                content:
+`# Staff Application Result
+
+Congratulations! Your staff application for **Los Angeles State Roleplay** has been **approved**.
+
+You have been accepted as a **Trainee** within our server.
+
+Please be on the lookout in the **Training** category for updates and training sessions from our Training Team.
+
+**Approved by:** ${interaction.user}`
+            }).catch(() => {});
+        }
+    } catch (error) {
+        console.error(
+            "[APPROVE] Could not DM the applicant:",
+            error
+        );
+    }
+
+    // 5. Mark the application as reviewed
 
     for (
         const application of
@@ -3194,9 +3365,27 @@ Please be on the lookout in the **Training** category for updates and training s
         }
     }
 
+    // 6. Tell the reviewer exactly what happened
+
+    let followUpText =
+        `Application **approved** by ${interaction.user}.`;
+
+    if (resultsOutcome?.ok) {
+        followUpText +=
+            `\n✅ Results posted in <#${RESULTS_CHANNEL_ID}>.`;
+
+        if (resultsOutcome.note) {
+            followUpText +=
+                `\n${resultsOutcome.note}`;
+        }
+    } else {
+        followUpText +=
+            `\n⚠️ **The results message was NOT posted.**\n${resultsOutcome?.reason || "Unknown error. Check the bot console."}`;
+    }
+
     await interaction.followUp({
         content:
-            `Application **approved** by ${interaction.user}.`,
+            followUpText,
         flags:
             MessageFlags.Ephemeral
     }).catch(() => {});
@@ -4663,26 +4852,8 @@ client.on(
 );
 
 // ======================================================
-
 // LOGIN
-
 // ======================================================
-
-const https = require("https");
-
-https.get("https://api.ipify.org", (res) => {
-    let ip = "";
-
-    res.on("data", (chunk) => {
-        ip += chunk;
-    });
-
-    res.on("end", () => {
-        console.log(`[ER:LC] Railway Public IP: ${ip}`);
-    });
-}).on("error", (err) => {
-    console.error("[ER:LC] Failed to get public IP:", err.message);
-});
 
 client.login(
     process.env.TOKEN
