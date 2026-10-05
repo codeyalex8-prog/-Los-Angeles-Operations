@@ -120,7 +120,7 @@ const client = new Client({
         GatewayIntentBits.GuildPresences
     ]
 });
-
+global.client = client;
 client.commands = new Collection();
 
 // ======================================================
@@ -4321,7 +4321,7 @@ await sendOpeningMessage(
 
                     if (
                         interaction.deferred ||
-                        interaction.replied
+                        interaction.repliedF
                     ) {
                         await interaction.editReply({
                             content:
