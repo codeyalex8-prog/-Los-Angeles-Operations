@@ -1,8 +1,13 @@
 const {
-    EmbedBuilder,
+    ContainerBuilder,
+    TextDisplayBuilder,
+    SeparatorBuilder,
+    SectionBuilder,
+    ThumbnailBuilder,
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle
+    ButtonStyle,
+    MessageFlags
 } = require("discord.js");
 
 const WATCHED_ROLE_ID = "1555284465318764724";
@@ -17,269 +22,380 @@ if (!client) {
     );
 } else {
 
-    client.on("guildMemberRemove", async (member) => {
-        try {
-            // Only alert when the member had the monitored role
-            if (!member.roles.cache.has(WATCHED_ROLE_ID)) {
-                return;
-            }
+    // ======================================================
+    // BUILD LEAVE PANEL
+    // ======================================================
 
-            const channel =
-                member.guild.channels.cache.get(
-                    ALERT_CHANNEL_ID
-                );
+    function buildLeavePanel({
+        member,
+        resolved = false,
+        resolver = null
+    }) {
+        const username = member.user.username;
 
-            if (!channel) {
-                console.error(
-                    `[Leave Alert] Channel ${ALERT_CHANNEL_ID} was not found.`
-                );
-                return;
-            }
+        const displayName =
+            member.displayName ||
+            member.user.globalName ||
+            username;
 
-            const username = member.user.username;
-            const displayName =
-                member.displayName ||
-                member.user.globalName ||
-                username;
+        const userId = member.user.id;
 
-            const userId = member.user.id;
+        const avatar =
+            member.user.displayAvatarURL({
+                extension: "png",
+                size: 256
+            });
 
-            const avatar =
-                member.user.displayAvatarURL({
-                    extension: "png",
-                    size: 256
-                });
-
-            const joinedTimestamp =
-                member.joinedTimestamp
-                    ? Math.floor(
-                          member.joinedTimestamp / 1000
-                      )
-                    : null;
-
-            const leftTimestamp =
-                Math.floor(Date.now() / 1000);
-
-            // ================================
-            // LEAVE ALERT PANEL
-            // ================================
-
-            const embed = new EmbedBuilder()
-                .setColor(0xED4245)
-                .setAuthor({
-                    name: "Staff Departure Alert",
-                    iconURL: avatar
-                })
-                .setThumbnail(avatar)
-                .setDescription(
-                    `A member has left **${member.guild.name}** while holding the monitored staff role.`
+        const joinedTimestamp =
+            member.joinedTimestamp
+                ? Math.floor(
+                    member.joinedTimestamp / 1000
                 )
-                .addFields(
-                    {
-                        name: "Member",
-                        value:
-                            `**${displayName}**\n` +
-                            `@${username}`,
-                        inline: true
-                    },
-                    {
-                        name: "User ID",
-                        value: `\`${userId}\``,
-                        inline: true
-                    },
-                    {
-                        name: "Staff Role",
-                        value:
-                            `<@&${WATCHED_ROLE_ID}>`,
-                        inline: true
-                    },
-                    {
-                        name: "Joined Server",
-                        value: joinedTimestamp
-                            ? `<t:${joinedTimestamp}:F>\n<t:${joinedTimestamp}:R>`
-                            : "Unknown",
-                        inline: true
-                    },
-                    {
-                        name: "Left Server",
-                        value:
-                            `<t:${leftTimestamp}:F>\n<t:${leftTimestamp}:R>`,
-                        inline: true
-                    },
-                    {
-                        name: "Status",
-                        value: "🔴 **Unresolved**",
-                        inline: true
-                    }
-                )
-                .setFooter({
-                    text:
-                        `Staff Departure • ${username}`
-                })
-                .setTimestamp();
+                : null;
 
-            const row =
-                new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(
-                            `resolve_staff_leave_${userId}`
-                        )
-                        .setLabel("Resolve")
-                        .setEmoji("✅")
-                        .setStyle(
-                            ButtonStyle.Success
-                        )
+        const leftTimestamp =
+            Math.floor(Date.now() / 1000);
+
+        const container =
+            new ContainerBuilder()
+                .setAccentColor(
+                    resolved
+                        ? 0x57F287
+                        : 0xED4245
                 );
 
-            // ================================
-            // SEND ALERT
-            // ================================
+        // ==================================================
+        // HEADER + AVATAR
+        // ==================================================
 
-            const message =
+        const header =
+            new SectionBuilder()
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder()
+                        .setContent(
+                            resolved
+                                ? "## Staff Departure — Resolved"
+                                : "## Staff Departure Alert"
+                        )
+                )
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder()
+                        .setContent(
+                            resolved
+                                ? "The staff departure has been reviewed and resolved."
+                                : "A member has left the server while holding the monitored staff role."
+                        )
+                )
+                .setThumbnailAccessory(
+                    new ThumbnailBuilder()
+                        .setURL(avatar)
+                );
+
+        container.addSectionComponents(header);
+
+        container.addSeparatorComponents(
+            new SeparatorBuilder()
+        );
+
+        // ==================================================
+        // MEMBER
+        // ==================================================
+
+        container.addTextDisplayComponents(
+            new TextDisplayBuilder()
+                .setContent(
+                    `### Member\n` +
+                    `**${displayName}**\n` +
+                    `@${username}\n` +
+                    `\`${userId}\``
+                )
+        );
+
+        container.addSeparatorComponents(
+            new SeparatorBuilder()
+        );
+
+        // ==================================================
+        // STAFF ROLE
+        // ==================================================
+
+        container.addTextDisplayComponents(
+            new TextDisplayBuilder()
+                .setContent(
+                    `### Staff Role\n` +
+                    `<@&${WATCHED_ROLE_ID}>`
+                )
+        );
+
+        container.addSeparatorComponents(
+            new SeparatorBuilder()
+        );
+
+        // ==================================================
+        // SERVER DATES
+        // ==================================================
+
+        container.addTextDisplayComponents(
+            new TextDisplayBuilder()
+                .setContent(
+                    `### Server Activity\n` +
+                    `**Joined:** ${
+                        joinedTimestamp
+                            ? `<t:${joinedTimestamp}:F> (<t:${joinedTimestamp}:R>)`
+                            : "Unknown"
+                    }\n` +
+                    `**Left:** <t:${leftTimestamp}:F> (<t:${leftTimestamp}:R>)`
+                )
+        );
+
+        container.addSeparatorComponents(
+            new SeparatorBuilder()
+        );
+
+        // ==================================================
+        // STATUS
+        // ==================================================
+
+        if (resolved && resolver) {
+
+            container.addTextDisplayComponents(
+                new TextDisplayBuilder()
+                    .setContent(
+                        `### Status\n` +
+                        `🟢 **Resolved**\n` +
+                        `Resolved by **${resolver.username}**`
+                    )
+            );
+
+        } else {
+
+            container.addTextDisplayComponents(
+                new TextDisplayBuilder()
+                    .setContent(
+                        `### Status\n` +
+                        `🔴 **Unresolved**`
+                    )
+            );
+        }
+
+        container.addSeparatorComponents(
+            new SeparatorBuilder()
+        );
+
+        // ==================================================
+        // BUTTON
+        // ==================================================
+
+        const button =
+            new ButtonBuilder()
+                .setCustomId(
+                    resolved
+                        ? `resolved_staff_leave_${userId}`
+                        : `resolve_staff_leave_${userId}`
+                )
+                .setLabel(
+                    resolved
+                        ? `Resolved by ${resolver.username}`
+                        : "Resolve"
+                )
+                .setEmoji("✅")
+                .setStyle(ButtonStyle.Success)
+                .setDisabled(resolved);
+
+        const row =
+            new ActionRowBuilder()
+                .addComponents(button);
+
+        container.addActionRowComponents(row);
+
+        // ==================================================
+        // FOOTER
+        // ==================================================
+
+        container.addSeparatorComponents(
+            new SeparatorBuilder()
+        );
+
+        container.addTextDisplayComponents(
+            new TextDisplayBuilder()
+                .setContent(
+                    resolved && resolver
+                        ? `-# Staff Departure System • Resolved by ${resolver.username}`
+                        : `-# Staff Departure System • Monitoring staff departures`
+                )
+        );
+
+        return container;
+    }
+
+    // ======================================================
+    // MEMBER LEAVES
+    // ======================================================
+
+    client.on(
+        "guildMemberRemove",
+        async member => {
+
+            try {
+
+                // Only trigger for the specific role
+                if (
+                    !member.roles.cache.has(
+                        WATCHED_ROLE_ID
+                    )
+                ) {
+                    return;
+                }
+
+                const channel =
+                    member.guild.channels.cache.get(
+                        ALERT_CHANNEL_ID
+                    );
+
+                if (!channel) {
+                    console.error(
+                        `[Leave Alert] Could not find channel ${ALERT_CHANNEL_ID}.`
+                    );
+                    return;
+                }
+
+                // ==================================================
+                // BUILD PANEL
+                // ==================================================
+
+                const container =
+                    buildLeavePanel({
+                        member
+                    });
+
+                // ==================================================
+                // SEND PANEL
+                // ==================================================
+
+                const message =
+                    await channel.send({
+                        flags:
+                            MessageFlags.IsComponentsV2,
+                        components: [
+                            container
+                        ],
+                        allowedMentions: {
+                            roles: [
+                                PING_ROLE_ID
+                            ]
+                        },
+                        content:
+                            undefined
+                    });
+
+                // Send the role mention separately only if
+                // the channel supports normal content.
                 await channel.send({
                     content:
                         `<@&${PING_ROLE_ID}>`,
-                    embeds: [embed],
-                    components: [row],
                     allowedMentions: {
-                        roles: [PING_ROLE_ID]
+                        roles: [
+                            PING_ROLE_ID
+                        ]
                     }
                 });
 
-            console.log(
-                `[Leave Alert] ${username} (${userId}) left while holding the monitored role.`
-            );
+                console.log(
+                    `[Leave Alert] ${member.user.username} (${member.user.id}) left with monitored role.`
+                );
 
-            // ================================
-            // RESOLVE BUTTON
-            // ================================
+                // ==================================================
+                // RESOLVE COLLECTOR
+                // ==================================================
 
-            const collector =
-                message.createMessageComponentCollector({
-                    filter: (interaction) =>
-                        interaction.isButton() &&
-                        interaction.customId ===
-                            `resolve_staff_leave_${userId}`,
-                    time:
-                        7 * 24 * 60 * 60 * 1000
-                });
+                const collector =
+                    message.createMessageComponentCollector({
+                        filter:
+                            interaction =>
+                                interaction.isButton() &&
+                                interaction.customId ===
+                                    `resolve_staff_leave_${member.user.id}`,
+                        time:
+                            7 *
+                            24 *
+                            60 *
+                            60 *
+                            1000
+                    });
 
-            collector.on(
-                "collect",
-                async (interaction) => {
-                    try {
-                        const resolver =
-                            interaction.user;
+                collector.on(
+                    "collect",
+                    async interaction => {
 
-                        collector.stop(
-                            "resolved"
-                        );
+                        try {
 
-                        const resolvedEmbed =
-                            EmbedBuilder.from(
-                                embed
-                            )
-                                .setColor(
-                                    0x57F287
-                                )
-                                .setDescription(
-                                    `A staff member left **${member.guild.name}** while holding the monitored role.\n\n` +
-                                    `This departure alert has been resolved.`
-                                )
-                                .setFields(
-                                    {
-                                        name: "Member",
-                                        value:
-                                            `**${displayName}**\n` +
-                                            `@${username}`,
-                                        inline: true
-                                    },
-                                    {
-                                        name: "User ID",
-                                        value:
-                                            `\`${userId}\``,
-                                        inline: true
-                                    },
-                                    {
-                                        name: "Staff Role",
-                                        value:
-                                            `<@&${WATCHED_ROLE_ID}>`,
-                                        inline: true
-                                    },
-                                    {
-                                        name: "Joined Server",
-                                        value:
-                                            joinedTimestamp
-                                                ? `<t:${joinedTimestamp}:F>\n<t:${joinedTimestamp}:R>`
-                                                : "Unknown",
-                                        inline: true
-                                    },
-                                    {
-                                        name: "Left Server",
-                                        value:
-                                            `<t:${leftTimestamp}:F>\n<t:${leftTimestamp}:R>`,
-                                        inline: true
-                                    },
-                                    {
-                                        name: "Status",
-                                        value:
-                                            `🟢 **Resolved**\nby ${resolver}`,
-                                        inline: true
-                                    }
-                                )
-                                .setFooter({
-                                    text:
-                                        `Resolved by ${resolver.username} • ${resolver.id}`
-                                })
-                                .setTimestamp();
+                            const resolver =
+                                interaction.user;
 
-                        const resolvedRow =
-                            new ActionRowBuilder().addComponents(
-                                new ButtonBuilder()
-                                    .setCustomId(
-                                        `resolved_staff_leave_${userId}`
-                                    )
-                                    .setLabel(
-                                        `Resolved by ${resolver.username}`
-                                    )
-                                    .setEmoji("✅")
-                                    .setStyle(
-                                        ButtonStyle.Success
-                                    )
-                                    .setDisabled(true)
+                            collector.stop(
+                                "resolved"
                             );
 
-                        await interaction.update({
-                            embeds: [
-                                resolvedEmbed
-                            ],
-                            components: [
-                                resolvedRow
-                            ]
-                        });
+                            const resolvedContainer =
+                                buildLeavePanel({
+                                    member,
+                                    resolved: true,
+                                    resolver
+                                });
 
-                        console.log(
-                            `[Leave Alert] Alert for ${username} resolved by ${resolver.username}.`
-                        );
+                            await interaction.update({
+                                flags:
+                                    MessageFlags.IsComponentsV2,
+                                components: [
+                                    resolvedContainer
+                                ]
+                            });
 
-                    } catch (error) {
-                        console.error(
-                            "[Leave Alert] Resolve error:",
-                            error
-                        );
+                            console.log(
+                                `[Leave Alert] ${member.user.username}'s departure was resolved by ${resolver.username}.`
+                            );
+
+                        } catch (error) {
+
+                            console.error(
+                                "[Leave Alert] Resolve error:",
+                                error
+                            );
+
+                        }
+
                     }
-                }
-            );
+                );
 
-        } catch (error) {
-            console.error(
-                "[Leave Alert] Error:",
-                error
-            );
+                collector.on(
+                    "end",
+                    (_, reason) => {
+
+                        if (
+                            reason !==
+                            "resolved"
+                        ) {
+                            console.log(
+                                `[Leave Alert] Resolve button expired for ${member.user.username}.`
+                            );
+                        }
+
+                    }
+                );
+
+            } catch (error) {
+
+                console.error(
+                    "[Leave Alert] Error:",
+                    error
+                );
+
+            }
+
         }
-    });
+    );
 
     console.log(
-        "[Leave Alert] Staff departure system loaded."
+        "[Leave Alert] Components V2 staff departure system loaded."
     );
 }
